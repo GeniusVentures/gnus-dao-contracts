@@ -3,13 +3,13 @@ pragma solidity ^0.8.0;
 
 import { LibDiamond } from "contracts-starter/contracts/libraries/LibDiamond.sol";
 import { IERC173 } from "contracts-starter/contracts/interfaces/IERC173.sol";
-import "./ExampleAccessControl.sol";
-import "./ExampleConstantsFacet.sol";
+import "./GNUSDAOAccessControlFacet.sol";
+import "./GNUSDAOConstantsFacet.sol";
 
-/// @title ExampleOwnershipFacet
-/// @notice Provides ownership management for the Example contract using EIP-173 standards.
-/// @dev Extends ExampleAccessControl for role-based permissions and integrates with the Diamond Standard.
-contract ExampleOwnershipFacet is IERC173, ExampleAccessControl {
+/// @title GNUSDAOOwnershipFacet
+/// @notice Provides ownership management for the GNUSDAO contract using EIP-173 standards.
+/// @dev Extends AccessControl for role-based permissions and integrates with the Diamond Standard.
+contract GNUSDAOOwnershipFacet is IERC173, GNUSDAOAccessControlFacet {
     /**
      * @notice Transfers contract ownership to a new address.
      * @param _newOwner The address of the new owner.

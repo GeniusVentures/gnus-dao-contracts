@@ -5,31 +5,31 @@ import "@gnus.ai/contracts-upgradeable-diamond/access/AccessControlEnumerableUpg
 import "@gnus.ai/contracts-upgradeable-diamond/proxy/utils/Initializable.sol";
 import "contracts-starter/contracts/libraries/LibDiamond.sol";
 
-/// @title  Access Control Contract
+/// @title GNUSDAO Access Control Contract
 /// @notice Provides role-based access control with additional constraints for super admins.
 /// @dev Extends `AccessControlEnumerableUpgradeable` to enable enumerability and role management.
-abstract contract AccessControl is Initializable, AccessControlEnumerableUpgradeable {
+contract GNUSDAOAccessControlFacet is Initializable, AccessControlEnumerableUpgradeable {
 
     /// @notice Role identifier for the upgrader role.
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
     /**
-     * @notice Initializes the  Access Control system.
+     * @notice Initializes the GNUSDAO Access Control system.
      * @dev This function is restricted to the super admin during contract initialization.
      * Calls the internal `_grantRole` to assign roles.
      * Uses `onlyInitializing` to restrict initialization calls.
      */
-    function __AccessControl_init() internal override onlyInitializing onlySuperAdminRole {
+    function __GNUSDAOAccessControl_init() internal onlyInitializing onlySuperAdminRole {
         __AccessControlEnumerable_init_unchained();
-        __AccessControl_init_unchained();
+        __GNUSDAOAccessControl_init_unchained();
     }
 
     /**
-     * @notice Additional initialization logic for the  Access Control system.
+     * @notice Additional initialization logic for the GNUSDAO Access Control system.
      * @dev Assigns the `DEFAULT_ADMIN_ROLE` and `UPGRADER_ROLE` to the super admin.
      * Uses `onlyInitializing` to ensure this is called only during initialization.
      */
-    function __AccessControl_init_unchained() internal override onlyInitializing {
+    function __GNUSDAOAccessControl_init_unchained() internal onlyInitializing {
         address superAdmin = _msgSender();
         _grantRole(DEFAULT_ADMIN_ROLE, superAdmin);
         _grantRole(UPGRADER_ROLE, superAdmin);

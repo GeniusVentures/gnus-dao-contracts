@@ -7,17 +7,17 @@ import "contracts-starter/contracts/Diamond.sol";
 import "contracts-starter/contracts/libraries/LibDiamond.sol";
 import "@gnus.ai/contracts-upgradeable-diamond/utils/introspection/ERC165StorageUpgradeable.sol";
 import "@gnus.ai/contracts-upgradeable-diamond/token/ERC1155/IERC1155Upgradeable.sol";
-import "./ExampleOwnershipFacet.sol";
+import "./GNUSDAOOwnershipFacet.sol";
 
-/// @title ExampleDiamond
+/// @title GNUSDAODiamond
 /// @notice Implements a modular and upgradeable diamond contract with ERC165 compatibility.
 /// @dev Leverages the EIP-2535 Diamond Standard for modularity and the ERC165 interface for introspection.
 /// Includes ownership management through facets.
-contract ExampleDiamond is Diamond, ERC165StorageUpgradeable {
+contract GNUSDAODiamond is Diamond, ERC165StorageUpgradeable {
     using LibDiamond for LibDiamond.DiamondStorage;
 
     /**
-     * @notice Initializes the ExampleDiamond contract with the contract owner and diamond cut facet.
+     * @notice Initializes the GNUSDAODiamond contract with the contract owner and diamond cut facet.
      * @param _contractOwner The address of the contract owner.
      * @param _diamondCutFacet The address of the DiamondCutFacet contract.
      * @dev This constructor registers supported interfaces and sets the initial state.
