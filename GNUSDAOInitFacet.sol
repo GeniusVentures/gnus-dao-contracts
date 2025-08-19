@@ -45,33 +45,4 @@ contract GNUSDAOInitFacet is ContextUpgradeable, AccessControlEnumerableUpgradea
         // Enable ERC20 interface support as example
         LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;
     }
-
-    /// @notice Initializes the diamond with version 1.0.0
-    /// @dev This function is called during the deployment of the diamond contract
-    /// @custom:security Ensure that the contract is not already initialized
-    function diamondInitUpgrade100() public {
-        address sender = _msgSender();
-        emit InitLog(sender, "diamondInitUpgrade100 Function called");
-
-        _grantRole(DEFAULT_ADMIN_ROLE, sender);
-        _grantRole(UPGRADER_ROLE, sender);
-        // Enable ERC20 interface support
-        LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;
-    }
-
-
-    /// @notice Initializes the diamond with version 1.0.0
-    /// @dev This function is called during the deployment of the diamond contract
-    /// @custom:security Ensure that the contract is not already initialized
-    function diamondInitialize100() public {
-        address sender = _msgSender();
-        emit InitLog(sender, "diamondInitialize Function called");
-
-        // run the diamondInitialize000 function as part of diamondInitialize
-        diamondInitialize000();
-        diamondInitUpgrade100();
-        
-        // Enable ERC20 interface support
-        LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;
-    }
 }
