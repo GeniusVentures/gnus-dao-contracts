@@ -2,9 +2,9 @@
 pragma solidity ^0.8.0;
 
 import {ReentrancyGuardUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/security/ReentrancyGuardUpgradeable.sol";
-import {OwnableUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/security/PausableUpgradeable.sol";
 import {Initializable} from "@gnus.ai/contracts-upgradeable-diamond/proxy/utils/Initializable.sol";
+import "contracts-starter/contracts/libraries/LibDiamond.sol";
 
 /**
  * @title GNUSDAOGovernanceFacet
@@ -17,7 +17,14 @@ import {Initializable} from "@gnus.ai/contracts-upgradeable-diamond/proxy/utils/
  * - Sybil resistance via token thresholds and cooldowns
  * - Treasury management integration
  */
-contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, OwnableUpgradeable, PausableUpgradeable {
+// Interface for token facet functions
+interface IGovernanceTokenFacet {
+    function balanceOf(address account) external view returns (uint256);
+    function getVotingPower(address account) external view returns (uint256);
+    function burnFrom(address from, uint256 amount) external;
+}
+
+contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable {
 
     // Custom Errors
     error AlreadyInitialized();
@@ -123,9 +130,14 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Ow
     event TreasuryWithdrawal(address indexed to, uint256 amount);
     
     // Modifiers
+    modifier onlyOwner() {
+        LibDiamond.enforceIsContractOwner();
+        _;
+    }
+    
     modifier onlyTreasuryManager() {
         GovernanceStorage storage gs = _getGovernanceStorage();
-        if (!gs.treasuryManagers[_msgSender()] && _msgSender() != owner()) {
+        if (!gs.treasuryManagers[_msgSender()] && _msgSender() != LibDiamond.contractOwner()) {
             revert NotTreasuryManager();
         }
         _;
@@ -156,18 +168,26 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Ow
     
     /**
      * @dev Initialize the governance facet
-     * @param _initialOwner Initial owner of the contract
+     * @param _initialOwner Initial owner of the contract (must be diamond owner)
      */
     function initializeGovernance(address _initialOwner) external initializer {
         GovernanceStorage storage gs = _getGovernanceStorage();
+        
+        if (gs.initialized) {
+            revert AlreadyInitialized();
+        }
+
+        // Ensure caller is diamond owner
+        LibDiamond.enforceIsContractOwner();
+        
+        // Verify initial owner matches diamond owner
+        if (_initialOwner != LibDiamond.contractOwner()) {
+            revert ZeroAddress(); // Reuse error for invalid owner
+        }
 
         // Initialize OpenZeppelin contracts
         __ReentrancyGuard_init();
-        __Ownable_init();
         __Pausable_init();
-
-        // Transfer ownership to the initial owner
-        _transferOwnership(_initialOwner);
         
         // Set default voting configuration
         gs.votingConfig = VotingConfig({
@@ -328,27 +348,44 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Ow
     }
 
     /**
-     * @dev Execute a proposal (placeholder for future implementation)
+     * @dev Execute a proposal
      * @param proposalId ID of the proposal to execute
+     * @notice This function validates proposal execution conditions and marks it as executed.
+     * @notice For production, extend this to execute on-chain actions (treasury transfers, 
+     *         diamond upgrades, etc.) based on proposal metadata stored in IPFS.
+     * @notice Consider implementing a timelock mechanism for additional security.
      */
     function executeProposal(uint256 proposalId) external proposalExists(proposalId) onlyOwner {
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
+        
+        // Validate voting has ended
         if (block.timestamp <= proposal.endTime) {
             revert VotingStillActive();
         }
+        
+        // Validate proposal state
         if (proposal.executed) {
             revert AlreadyExecuted();
         }
         if (proposal.cancelled) {
             revert ProposalAlreadyCancelled();
         }
+        
+        // Validate quorum threshold
         if (proposal.totalVotes < gs.votingConfig.quorumThreshold) {
             revert QuorumNotMet();
         }
 
+        // Mark proposal as executed
         proposal.executed = true;
         emit ProposalExecuted(proposalId);
+        
+        // TODO: For production implementation, add:
+        // 1. Parse proposal actions from IPFS metadata
+        // 2. Execute on-chain actions (treasury transfers, diamond upgrades, etc.)
+        // 3. Implement timelock for critical operations
+        // 4. Add event emissions for executed actions
     }
 
     /**
@@ -358,7 +395,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Ow
     function cancelProposal(uint256 proposalId) external proposalExists(proposalId) {
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
-        if (_msgSender() != proposal.proposer && _msgSender() != owner()) {
+        if (_msgSender() != proposal.proposer && _msgSender() != LibDiamond.contractOwner()) {
             revert OnlyProposerOrOwner();
         }
         if (proposal.executed) {
@@ -545,13 +582,14 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Ow
 
     /**
      * @dev Internal function to get voting power from governance token facet
+     * @param account Address to check voting power for
      * @return Voting power of the account
      */
-    function _getVotingPower(address /* account */) internal view returns (uint256) {
-        // In a real implementation, this would call the governance token facet
-        // For now, we'll use a placeholder that returns balance from the token facet
-        // This should be replaced with proper Diamond pattern function calls
-        return 1000 * 10**18; // Placeholder - should call governance token facet
+    function _getVotingPower(address account) internal view returns (uint256) {
+        // Call the governance token facet through the diamond proxy
+        // Using 'this' routes through the diamond to the correct facet
+        IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
+        return tokenFacet.getVotingPower(account);
     }
 
     /**
@@ -560,13 +598,13 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Ow
      * @param amount Amount of tokens to burn
      */
     function _burnFrom(address from, uint256 amount) internal {
-        // In a real implementation, this would call the governance token facet
-        // For now, we'll use a placeholder
-        // This should be replaced with proper Diamond pattern function calls
         if (from == address(0) || amount == 0) {
             revert ZeroAddress();
         }
-        // Placeholder - should call governance token facet burnFrom function
+        // Call the governance token facet through the diamond proxy
+        // Using 'this' routes through the diamond to the correct facet
+        IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
+        tokenFacet.burnFrom(from, amount);
     }
 
     // Receive function to accept ETH deposits

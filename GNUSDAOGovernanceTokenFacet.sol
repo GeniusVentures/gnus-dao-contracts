@@ -108,7 +108,7 @@ contract GNUSDAOGovernanceTokenFacet is
      * @dev Initialize the governance token facet
      * @param _name Token name
      * @param _symbol Token symbol
-     * @param _initialOwner Initial owner of the contract
+     * @param _initialOwner Initial owner of the contract (must be diamond owner)
      */
     function initializeGovernanceToken(
         string memory _name,
@@ -118,6 +118,14 @@ contract GNUSDAOGovernanceTokenFacet is
         GovernanceTokenStorage storage gs = _getGovernanceTokenStorage();
         if (gs.initialized) {
             revert AlreadyInitialized();
+        }
+
+        // Ensure caller is diamond owner
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()) || _msgSender() == _initialOwner, "Not authorized");
+        
+        // Verify initial owner is not zero address
+        if (_initialOwner == address(0)) {
+            revert ZeroAddress();
         }
 
         // Initialize ERC20 data

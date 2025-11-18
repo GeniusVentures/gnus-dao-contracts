@@ -36,13 +36,48 @@ contract GNUSDAOInitFacet is ContextUpgradeable, AccessControlEnumerableUpgradea
     /// @custom:security Verify roles are properly set up
     function diamondInitialize000() public {
         address sender = _msgSender();
-        emit InitLog(sender, "diamondInitialize Function called");
+        emit InitLog(sender, "diamondInitialize000 Function called");
 
         // Set up roles and permissions
         _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _setupRole(UPGRADER_ROLE, _msgSender());
         
         // Enable ERC20 interface support as example
+        LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;
+    }
+
+    /// @notice Initializes the diamond with version 1.0.0
+    /// @dev Sets up roles and permissions for version 1.0.0
+    /// @custom:security Verify roles are properly set up
+    function diamondInitialize100() public {
+        address sender = _msgSender();
+        emit InitLog(sender, "diamondInitialize100 Function called");
+
+        // Set up roles and permissions
+        _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _setupRole(UPGRADER_ROLE, _msgSender());
+        
+        // Enable ERC20 interface support
+        LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;
+        
+        // Additional initialization for version 1.0.0 can be added here
+    }
+
+    /// @notice Upgrades the diamond from version 0.0.0 to 1.0.0
+    /// @dev Handles migration logic when upgrading from version 0.0.0
+    /// @custom:security Verify upgrade is authorized
+    function diamondUpgrade100() public onlySuperAdminRole {
+        address sender = _msgSender();
+        emit InitLog(sender, "diamondUpgrade100 Function called");
+
+        // Migration logic from version 0.0.0 to 1.0.0
+        // This can include:
+        // - Updating storage layouts
+        // - Migrating data
+        // - Adding new roles
+        // - Enabling new interfaces
+        
+        // Example: Ensure ERC20 interface is still enabled
         LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;
     }
 }
