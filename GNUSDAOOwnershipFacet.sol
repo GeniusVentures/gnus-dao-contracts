@@ -20,6 +20,12 @@ contract GNUSDAOOwnershipFacet is IERC173, GNUSDAOAccessControlFacet {
         // Ensure the caller is the current contract owner
         LibDiamond.enforceIsContractOwner();
 
+        // Prevent transferring ownership to zero address
+        require(_newOwner != address(0), "New owner cannot be zero address");
+
+        // Store previous owner for event emission
+        address previousOwner = msg.sender;
+
         // Update contract ownership
         LibDiamond.setContractOwner(_newOwner);
 
@@ -28,10 +34,13 @@ contract GNUSDAOOwnershipFacet is IERC173, GNUSDAOAccessControlFacet {
         _grantRole(UPGRADER_ROLE, _newOwner);
 
         // Revoke roles from the previous owner, if different
-        if (msg.sender != _newOwner) {
-            _revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
-            _revokeRole(UPGRADER_ROLE, msg.sender);
+        if (previousOwner != _newOwner) {
+            _revokeRole(DEFAULT_ADMIN_ROLE, previousOwner);
+            _revokeRole(UPGRADER_ROLE, previousOwner);
         }
+
+        // Emit ownership transfer event
+        emit OwnershipTransferred(previousOwner, _newOwner);
     }
 
     /**
