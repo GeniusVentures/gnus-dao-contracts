@@ -53,6 +53,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     error AlreadyCancelled();
     error ZeroAmount();
     error InsufficientTreasuryBalance();
+    error RecipientIsContract();
     error ProposalNotQueued();
     error TimelockNotExpired();
     error TimelockExpired();
@@ -585,13 +586,33 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     }
 
     /**
-     * @dev Withdraw from treasury
-     * @param to Address to withdraw to
-     * @param amount Amount to withdraw
+     * @dev Check if an address is a contract
+     * @param account Address to check
+     * @return True if the address contains code, false otherwise
      */
+    function _isContract(address account) internal view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(account)
+        }
+        return size > 0;
+    }
+
+    /**
+     * @dev Withdraw from treasury
+     * @param to Address to withdraw to (must be EOA, not contract)
+     * @param amount Amount to withdraw
+     * @notice Only allows withdrawals to EOA addresses to prevent reentrancy attacks
+     * @notice For contract recipients, use the proposal execution system instead
+     */
+    // slither-disable-next-line arbitrary-send-eth
     function withdrawFromTreasury(address payable to, uint256 amount) external onlyTreasuryManager {
         if (to == address(0)) {
             revert ZeroAddress();
+        }
+        // Prevent sending to contracts to avoid reentrancy attacks
+        if (_isContract(to)) {
+            revert RecipientIsContract();
         }
         if (amount == 0) {
             revert ZeroAmount();
@@ -604,6 +625,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         gs.treasuryBalance -= amount;
 
         // Use .call() instead of .transfer() to avoid 2300 gas limit
+        // Safe from reentrancy because recipient is verified to be an EOA
         (bool success, ) = to.call{value: amount}("");
         require(success, "Treasury withdrawal failed");
 
