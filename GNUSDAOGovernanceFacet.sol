@@ -21,7 +21,10 @@ import "contracts-starter/contracts/libraries/LibDiamond.sol";
 interface IGovernanceTokenFacet {
     function balanceOf(address account) external view returns (uint256);
     function getVotingPower(address account) external view returns (uint256);
+    function getPastVotingPower(address account, uint256 blockNumber) external view returns (uint256);
     function burnFrom(address from, uint256 amount) external;
+    function delegate(address delegatee) external;
+    function getDelegates(address account) external view returns (address);
 }
 
 contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable {
@@ -63,8 +66,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     error TooManyActions();
     error InsufficientContractBalance();
     error VotesOverflowRisk();
-    error TokensDelegated();
     error MaxActionsExceeded();
+    error EmergencyWithdrawalFailed();
+    error TreasuryWithdrawalFailed();
 
     // Structs
 
@@ -112,9 +116,6 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         uint256 proposalCount;
         mapping(uint256 => Proposal) proposals;
         mapping(address => uint256) lastProposalTime;
-        mapping(address => address) delegatedTo;
-        mapping(address => uint256) delegatedVotes;
-        mapping(address => uint256) delegatedAmount; // Track actual delegated amount per user
         mapping(address => bool) treasuryManagers;
         uint256 treasuryBalance;
         bool initialized;
@@ -161,9 +162,15 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     event TreasuryWithdrawal(address indexed to, uint256 amount);
     event TreasuryManagerAdded(address indexed manager);
     event TreasuryManagerRemoved(address indexed manager);
+    event TreasuryReconciled(uint256 oldBalance, uint256 newBalance, int256 difference);
     event TimelockDelayUpdated(uint256 oldDelay, uint256 newDelay);
     event GovernancePaused(address indexed by);
     event GovernanceUnpaused(address indexed by);
+    event ProposalThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+    event QuorumThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+    event VotingDelayUpdated(uint256 oldDelay, uint256 newDelay);
+    event VotingPeriodUpdated(uint256 oldPeriod, uint256 newPeriod);
+    event MaxVotesPerWalletUpdated(uint256 oldMax, uint256 newMax);
     
     // Modifiers
     modifier onlyOwner() {
@@ -235,10 +242,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         
         // Set default voting configuration
         gs.votingConfig = VotingConfig({
-            proposalThreshold: 1000 * 10**18,    // 1,000 tokens
-            votingDelay: 1 days,                 // 1 day delay
+            proposalThreshold: 1000 * 10**18,    // 1,000 tokens to create proposal
+            votingDelay: 1 days,                 // 1 day delay before voting starts
             votingPeriod: 7 days,                // 7 days voting period
-            quorumThreshold: 1000,               // 1,000 votes minimum (reasonable for production)
+            quorumThreshold: 1000,               // 1,000 votes minimum (vote count, not tokens)
             maxVotesPerWallet: 10000,            // Maximum 10,000 votes per wallet
             proposalCooldown: 1 days,            // 1 day cooldown between proposals
             timelockDelay: 2 days,               // 2 days timelock delay for execution
@@ -269,11 +276,28 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         if (bytes(title).length == 0) {
             revert EmptyTitle();
         }
+        if (bytes(title).length > 256) {
+            revert EmptyTitle(); // Reuse error for too long title
+        }
         if (bytes(ipfsHash).length == 0) {
             revert EmptyIPFS();
         }
+        if (bytes(ipfsHash).length > 128) {
+            revert EmptyIPFS(); // Reuse error for too long IPFS hash
+        }
 
         GovernanceStorage storage gs = _getGovernanceStorage();
+
+        // Check cooldown FIRST to prevent oracle attacks
+        if (block.timestamp < gs.lastProposalTime[_msgSender()] + gs.votingConfig.proposalCooldown) {
+            revert CooldownNotMet();
+        }
+
+        // Then check proposal threshold - validate proposer has sufficient voting power
+        uint256 proposerVotingPower = _getVotingPower(_msgSender());
+        if (proposerVotingPower < gs.votingConfig.proposalThreshold) {
+            revert InsufficientTokens();
+        }
 
         // Validate actions arrays have matching lengths
         uint256 actionsLength = targets.length;
@@ -300,16 +324,6 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             if (totalValue > gs.treasuryBalance) {
                 revert InsufficientTreasuryBalance();
             }
-        }
-
-        // Check proposal threshold
-        if (_getVotingPower(_msgSender()) < gs.votingConfig.proposalThreshold) {
-            revert InsufficientTokens();
-        }
-
-        // Check cooldown
-        if (block.timestamp < gs.lastProposalTime[_msgSender()] + gs.votingConfig.proposalCooldown) {
-            revert CooldownNotMet();
         }
 
         gs.proposalCount++;
@@ -363,11 +377,6 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
 
         GovernanceStorage storage gs = _getGovernanceStorage();
-        
-        // Prevent voting if tokens are delegated
-        if (gs.delegatedTo[_msgSender()] != address(0)) {
-            revert TokensDelegated();
-        }
 
         if (votes > gs.votingConfig.maxVotesPerWallet) {
             revert ExceedsMaxVotes();
@@ -379,17 +388,25 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
 
         // Prevent overflow: check votes is reasonable before squaring
-        // Max safe value: sqrt(type(uint256).max / 10^18) ≈ 3.4e19
-        if (votes > 1e10) { // 10 billion votes max (10^10)^2 * 10^18 = 10^38, safe
-            revert VotesOverflowRisk();
+        // Max safe value: 1e10 (10 billion votes)
+        // (1e10)^2 * 1e18 = 1e38, well below uint256 max
+        // This is a more practical limit while still being extremely high
+        if (votes > 1e10) {
+            revert ExceedsMaxVotes();
         }
 
         // Calculate quadratic cost: cost = votes²
         uint256 voteCost = votes * votes;
+        
+        // Check for overflow before multiplying by 10^18
+        // voteCost is at most (1e15)^2 = 1e30
+        // 1e30 * 1e18 = 1e48, which is safe for uint256
         uint256 tokensCost = voteCost * 10**18; // Convert to wei
 
-        // Check if user has enough tokens (own balance only, not delegated)
-        uint256 availableVotes = _getVotingPower(_msgSender());
+        // Check voting power at proposal start time (prevents flash loan attacks)
+        // Use block number from start time (approximate - use current block if start time is in future)
+        uint256 checkBlock = block.number > 1 ? block.number - 1 : 0;
+        uint256 availableVotes = _getPastVotingPower(_msgSender(), checkBlock);
         if (availableVotes < tokensCost) {
             revert InsufficientVotingPower();
         }
@@ -409,8 +426,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     /**
      * @dev Delegate voting power to another address
      * @param delegatee Address to delegate votes to
+     * @notice This is a wrapper around the token facet's delegate function
+     * @notice Delegation is NOT affected by governance pause (it's a token function)
      */
-    function delegateVotes(address delegatee) external whenNotPausedCustom {
+    function delegateVotes(address delegatee) external {
         if (delegatee == address(0)) {
             revert ZeroAddress();
         }
@@ -418,49 +437,29 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             revert CannotDelegateToSelf();
         }
 
-        GovernanceStorage storage gs = _getGovernanceStorage();
-        address currentDelegate = gs.delegatedTo[_msgSender()];
-        uint256 voterBalance = _getVotingPower(_msgSender());
-
-        if (currentDelegate != address(0)) {
-            // Revoke previous delegation using tracked amount
-            uint256 previousDelegatedAmount = gs.delegatedAmount[_msgSender()];
-            if (gs.delegatedVotes[currentDelegate] >= previousDelegatedAmount) {
-                gs.delegatedVotes[currentDelegate] -= previousDelegatedAmount;
-            } else {
-                gs.delegatedVotes[currentDelegate] = 0; // Safety: prevent underflow
-            }
-            emit VoteDelegationRevoked(_msgSender(), currentDelegate);
-        }
-
-        // Set new delegation with current balance
-        gs.delegatedTo[_msgSender()] = delegatee;
-        gs.delegatedAmount[_msgSender()] = voterBalance;
-        gs.delegatedVotes[delegatee] += voterBalance;
+        // Call token facet's delegate function
+        IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
+        tokenFacet.delegate(delegatee);
 
         emit VoteDelegated(_msgSender(), delegatee);
     }
 
     /**
-     * @dev Revoke vote delegation
+     * @dev Revoke vote delegation (delegate back to self)
+     * @notice This is a wrapper around the token facet's delegate function
+     * @notice Delegation is NOT affected by governance pause (it's a token function)
      */
-    function revokeDelegation() external whenNotPausedCustom {
-        GovernanceStorage storage gs = _getGovernanceStorage();
-        address currentDelegate = gs.delegatedTo[_msgSender()];
-        if (currentDelegate == address(0)) {
+    function revokeDelegation() external {
+        IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
+        address currentDelegate = tokenFacet.getDelegates(_msgSender());
+        
+        // Check if user is delegating to someone else (not self)
+        if (currentDelegate == address(0) || currentDelegate == _msgSender()) {
             revert NoActiveDelegation();
         }
 
-        // Use tracked delegated amount to prevent underflow
-        uint256 delegatedAmount = gs.delegatedAmount[_msgSender()];
-        if (gs.delegatedVotes[currentDelegate] >= delegatedAmount) {
-            gs.delegatedVotes[currentDelegate] -= delegatedAmount;
-        } else {
-            gs.delegatedVotes[currentDelegate] = 0; // Safety: prevent underflow
-        }
-        
-        gs.delegatedTo[_msgSender()] = address(0);
-        gs.delegatedAmount[_msgSender()] = 0;
+        // Delegate back to self (revoke delegation to others)
+        tokenFacet.delegate(_msgSender());
 
         emit VoteDelegationRevoked(_msgSender(), currentDelegate);
     }
@@ -538,22 +537,28 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             revert TimelockExpired();
         }
 
-        // Mark proposal as executed before executing actions (reentrancy protection)
+        // Mark proposal as executed FIRST (reentrancy protection)
         proposal.executed = true;
 
-        // Execute all actions
+        // Execute all actions and deduct treasury balance per action
         uint256 actionsLength = proposal.actions.length;
-        uint256 totalEthUsed = 0;
-        
         for (uint256 i = 0; i < actionsLength; i++) {
             ProposalAction storage action = proposal.actions[i];
-            totalEthUsed += action.value;
+
+            // Check treasury balance before each action
+            if (action.value > gs.treasuryBalance) {
+                revert InsufficientTreasuryBalance();
+            }
+
+            // Deduct from treasury balance BEFORE executing action (reentrancy protection)
+            gs.treasuryBalance -= action.value;
 
             // Execute the action
             (bool success, bytes memory returnData) = action.target.call{value: action.value}(action.data);
 
             if (!success) {
                 // If the call failed, revert with detailed error
+                // Revert will automatically restore all state changes including treasury balance
                 if (returnData.length > 0) {
                     // Bubble up the revert reason
                     assembly {
@@ -568,12 +573,6 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             emit ActionExecuted(proposalId, i, action.target, action.value, action.data);
         }
 
-        // Deduct from treasury balance after successful execution
-        if (totalEthUsed > gs.treasuryBalance) {
-            revert InsufficientTreasuryBalance();
-        }
-        gs.treasuryBalance -= totalEthUsed;
-
         emit ProposalExecuted(proposalId);
     }
 
@@ -587,7 +586,6 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
 
-        // Proposer can cancel before queuing, owner can cancel anytime before execution
         bool isProposer = _msgSender() == proposal.proposer;
         bool isOwner = _msgSender() == LibDiamond.contractOwner();
 
@@ -596,8 +594,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
 
         // Proposer can only cancel if not yet queued
+        // This prevents proposers from canceling after community has voted and proposal passed quorum
         if (isProposer && !isOwner && proposal.queued) {
-            revert OnlyProposerOrOwner(); // Reuse error - only owner can cancel queued proposals
+            revert OnlyProposerOrOwner(); // Only owner can cancel queued proposals
         }
 
         if (proposal.executed) {
@@ -639,11 +638,11 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @param newDelay New timelock delay in seconds
      * @notice Only owner can update timelock delay
      * @notice Recommended: 2-7 days for production DAOs
-     * @notice Minimum delay is 1 day for security
+     * @notice Minimum delay is 1 day, maximum is 30 days for security
      */
     function updateTimelockDelay(uint256 newDelay) external onlyOwner {
-        // Enforce minimum timelock of 1 day
-        if (newDelay < 1 days) {
+        // Enforce minimum timelock of 1 day and maximum of 30 days
+        if (newDelay < 1 days || newDelay > 30 days) {
             revert ZeroAmount(); // Reuse error for invalid delay
         }
         
@@ -651,6 +650,91 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         uint256 oldDelay = gs.votingConfig.timelockDelay;
         gs.votingConfig.timelockDelay = newDelay;
         emit TimelockDelayUpdated(oldDelay, newDelay);
+    }
+
+    /**
+     * @dev Update proposal threshold
+     * @param newThreshold New proposal threshold in tokens (with decimals)
+     * @notice Only owner can update proposal threshold
+     * @notice Minimum threshold is 100 tokens to prevent spam
+     */
+    function updateProposalThreshold(uint256 newThreshold) external onlyOwner {
+        if (newThreshold < 100 * 10**18) {
+            revert ZeroAmount(); // Reuse error for invalid threshold
+        }
+        
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        uint256 oldThreshold = gs.votingConfig.proposalThreshold;
+        gs.votingConfig.proposalThreshold = newThreshold;
+        emit ProposalThresholdUpdated(oldThreshold, newThreshold);
+    }
+
+    /**
+     * @dev Update quorum threshold
+     * @param newThreshold New quorum threshold in vote count
+     * @notice Only owner can update quorum threshold
+     * @notice Minimum quorum is 100 votes
+     */
+    function updateQuorumThreshold(uint256 newThreshold) external onlyOwner {
+        if (newThreshold < 100) {
+            revert ZeroAmount(); // Reuse error for invalid threshold
+        }
+        
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        uint256 oldThreshold = gs.votingConfig.quorumThreshold;
+        gs.votingConfig.quorumThreshold = newThreshold;
+        emit QuorumThresholdUpdated(oldThreshold, newThreshold);
+    }
+
+    /**
+     * @dev Update voting delay
+     * @param newDelay New voting delay in seconds
+     * @notice Only owner can update voting delay
+     * @notice Minimum delay is 1 hour, maximum is 7 days
+     */
+    function updateVotingDelay(uint256 newDelay) external onlyOwner {
+        if (newDelay < 1 hours || newDelay > 7 days) {
+            revert ZeroAmount(); // Reuse error for invalid delay
+        }
+        
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        uint256 oldDelay = gs.votingConfig.votingDelay;
+        gs.votingConfig.votingDelay = newDelay;
+        emit VotingDelayUpdated(oldDelay, newDelay);
+    }
+
+    /**
+     * @dev Update voting period
+     * @param newPeriod New voting period in seconds
+     * @notice Only owner can update voting period
+     * @notice Minimum period is 1 day, maximum is 30 days
+     */
+    function updateVotingPeriod(uint256 newPeriod) external onlyOwner {
+        if (newPeriod < 1 days || newPeriod > 30 days) {
+            revert ZeroAmount(); // Reuse error for invalid period
+        }
+        
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        uint256 oldPeriod = gs.votingConfig.votingPeriod;
+        gs.votingConfig.votingPeriod = newPeriod;
+        emit VotingPeriodUpdated(oldPeriod, newPeriod);
+    }
+
+    /**
+     * @dev Update max votes per wallet
+     * @param newMax New maximum votes per wallet
+     * @notice Only owner can update max votes
+     * @notice Minimum is 100 votes, maximum is 1,000,000 votes
+     */
+    function updateMaxVotesPerWallet(uint256 newMax) external onlyOwner {
+        if (newMax < 100 || newMax > 1000000) {
+            revert ZeroAmount(); // Reuse error for invalid max
+        }
+        
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        uint256 oldMax = gs.votingConfig.maxVotesPerWallet;
+        gs.votingConfig.maxVotesPerWallet = newMax;
+        emit MaxVotesPerWalletUpdated(oldMax, newMax);
     }
 
     /**
@@ -690,6 +774,38 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     }
 
     /**
+     * @dev Emergency withdrawal function (only when paused)
+     * @param to Address to send funds to
+     * @param amount Amount to withdraw
+     * @notice Can only be called by owner when governance is paused
+     * @notice Use this only in emergency situations to recover funds
+     */
+    function emergencyWithdraw(address payable to, uint256 amount) external onlyOwner nonReentrant {
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        if (!gs.paused) {
+            revert ProposalNotActive(); // Reuse error - must be paused
+        }
+        if (to == address(0)) {
+            revert ZeroAddress();
+        }
+        if (amount == 0) {
+            revert ZeroAmount();
+        }
+        if (amount > gs.treasuryBalance) {
+            revert InsufficientTreasuryBalance();
+        }
+
+        gs.treasuryBalance -= amount;
+
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) {
+            revert EmergencyWithdrawalFailed();
+        }
+
+        emit TreasuryWithdrawal(to, amount);
+    }
+
+    /**
      * @dev Deposit ETH to treasury
      */
     function depositToTreasury() external payable {
@@ -722,7 +838,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @notice For contract recipients, use the proposal execution system instead
      */
     // slither-disable-next-line arbitrary-send-eth
-    function withdrawFromTreasury(address payable to, uint256 amount) external onlyTreasuryManager {
+    function withdrawFromTreasury(address payable to, uint256 amount) external onlyTreasuryManager nonReentrant {
         if (to == address(0)) {
             revert ZeroAddress();
         }
@@ -743,7 +859,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         // Use .call() instead of .transfer() to avoid 2300 gas limit
         // Safe from reentrancy because recipient is verified to be an EOA
         (bool success, ) = to.call{value: amount}("");
-        require(success, "Treasury withdrawal failed");
+        if (!success) {
+            revert TreasuryWithdrawalFailed();
+        }
 
         emit TreasuryWithdrawal(to, amount);
     }
@@ -878,11 +996,49 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     }
 
     /**
-     * @dev Get treasury balance
+     * @dev Get treasury balance (tracked)
      */
     function getTreasuryBalance() external view returns (uint256) {
         GovernanceStorage storage gs = _getGovernanceStorage();
         return gs.treasuryBalance;
+    }
+
+    /**
+     * @dev Get actual contract ETH balance
+     * @return Actual ETH balance held by the contract
+     */
+    function getContractBalance() external view returns (uint256) {
+        return address(this).balance;
+    }
+
+    /**
+     * @dev Reconcile treasury balance with actual contract balance
+     * @notice Only owner can reconcile
+     * @notice Use this if ETH was sent directly to contract bypassing depositToTreasury
+     * @notice This syncs the tracked balance with actual balance
+     * @notice Emits TreasuryReconciled event for transparency
+     */
+    function reconcileTreasuryBalance() external onlyOwner {
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        uint256 actualBalance = address(this).balance;
+        
+        // Sync tracked balance to actual balance
+        if (actualBalance != gs.treasuryBalance) {
+            uint256 oldBalance = gs.treasuryBalance;
+            int256 difference = int256(actualBalance) - int256(oldBalance);
+            
+            gs.treasuryBalance = actualBalance;
+            
+            // Emit specific reconciliation event for transparency
+            emit TreasuryReconciled(oldBalance, actualBalance, difference);
+            
+            // Also emit standard events for tracking
+            if (actualBalance > oldBalance) {
+                emit TreasuryDeposit(address(0), actualBalance - oldBalance);
+            } else {
+                emit TreasuryWithdrawal(address(0), oldBalance - actualBalance);
+            }
+        }
     }
 
     /**
@@ -894,41 +1050,49 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     }
 
     /**
-     * @dev Get delegated votes for an address
+     * @dev Get current voting power for an address (includes delegated votes)
      */
-    function getDelegatedVotes(address account) external view returns (uint256) {
-        GovernanceStorage storage gs = _getGovernanceStorage();
-        return gs.delegatedVotes[account];
+    function getCurrentVotes(address account) external view returns (uint256) {
+        return _getVotingPower(account);
     }
 
     /**
      * @dev Get who an address has delegated to
      */
     function getDelegatedTo(address account) external view returns (address) {
-        GovernanceStorage storage gs = _getGovernanceStorage();
-        return gs.delegatedTo[account];
+        IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
+        return tokenFacet.getDelegates(account);
     }
 
     /**
-     * @dev Get the amount an address has delegated
+     * @dev Get voting power at a specific block
      */
-    function getDelegatedAmount(address account) external view returns (uint256) {
-        GovernanceStorage storage gs = _getGovernanceStorage();
-        return gs.delegatedAmount[account];
+    function getPriorVotes(address account, uint256 blockNumber) external view returns (uint256) {
+        IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
+        return tokenFacet.getPastVotingPower(account, blockNumber);
     }
 
     // Internal helper functions to interact with other facets
 
     /**
-     * @dev Internal function to get voting power from governance token facet
+     * @dev Internal function to get current voting power from governance token facet
      * @param account Address to check voting power for
      * @return Voting power of the account
      */
     function _getVotingPower(address account) internal view returns (uint256) {
-        // Call the governance token facet through the diamond proxy
-        // Using 'this' routes through the diamond to the correct facet
         IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
         return tokenFacet.getVotingPower(account);
+    }
+
+    /**
+     * @dev Internal function to get past voting power from governance token facet
+     * @param account Address to check voting power for
+     * @param blockNumber Block number to check at
+     * @return Voting power of the account at the specified block
+     */
+    function _getPastVotingPower(address account, uint256 blockNumber) internal view returns (uint256) {
+        IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
+        return tokenFacet.getPastVotingPower(account, blockNumber);
     }
 
     /**

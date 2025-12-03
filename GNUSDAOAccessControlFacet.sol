@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.2;
 
-import "@gnus.ai/contracts-upgradeable-diamond/access/AccessControlEnumerableUpgradeable.sol";
-import "@gnus.ai/contracts-upgradeable-diamond/proxy/utils/Initializable.sol";
-import "contracts-starter/contracts/libraries/LibDiamond.sol";
+import {AccessControlEnumerableUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/access/AccessControlEnumerableUpgradeable.sol";
+import {Initializable} from "@gnus.ai/contracts-upgradeable-diamond/proxy/utils/Initializable.sol";
+import {LibDiamond} from "contracts-starter/contracts/libraries/LibDiamond.sol";
 
 /// @title GNUSDAO Access Control Contract
+/// @author GNUSDAO Team
 /// @notice Provides role-based access control with additional constraints for super admins.
 /// @dev Extends `AccessControlEnumerableUpgradeable` to enable enumerability and role management.
 contract GNUSDAOAccessControlFacet is Initializable, AccessControlEnumerableUpgradeable {
@@ -35,42 +36,51 @@ contract GNUSDAOAccessControlFacet is Initializable, AccessControlEnumerableUpgr
         _grantRole(UPGRADER_ROLE, superAdmin);
     }
 
+    // Custom Errors
+    error CannotRenounceAdminRole();
+    error CannotRevokeAdminRole();
+
     /**
      * @notice Allows an account to renounce a specific role.
      * @dev Prevents the super admin from renouncing the `DEFAULT_ADMIN_ROLE`.
-     * Overrides the `renounceRole` function from `IAccessControlUpgradeable`.
+     * Overrides the `renounceRole` function from parent contracts.
      * @param role The role to renounce.
      * @param account The account renouncing the role.
      */
-    function renounceRole(bytes32 role, address account) public override(IAccessControlUpgradeable) {
-        require(
-            !(hasRole(DEFAULT_ADMIN_ROLE, account) && (LibDiamond.diamondStorage().contractOwner == account)),
-            "Cannot renounce superAdmin from Admin Role"
-        );
+    // solhint-disable-next-line no-complex-inheritance
+    function renounceRole(bytes32 role, address account) public override {
+        if (hasRole(DEFAULT_ADMIN_ROLE, account) && (LibDiamond.diamondStorage().contractOwner == account)) {
+            revert CannotRenounceAdminRole();
+        }
         super.renounceRole(role, account);
     }
 
     /**
      * @notice Revokes a specific role from an account.
      * @dev Prevents the super admin from being revoked from the `DEFAULT_ADMIN_ROLE`.
-     * Overrides the `revokeRole` function from `IAccessControlUpgradeable`.
+     * Overrides the `revokeRole` function from parent contracts.
      * @param role The role to revoke.
      * @param account The account losing the role.
      */
-    function revokeRole(bytes32 role, address account) public override(IAccessControlUpgradeable) {
-        require(
-            !(hasRole(DEFAULT_ADMIN_ROLE, account) && (LibDiamond.diamondStorage().contractOwner == account)),
-            "Cannot revoke superAdmin from Admin Role"
-        );
+    // solhint-disable-next-line no-complex-inheritance
+    function revokeRole(bytes32 role, address account) public override {
+        if (hasRole(DEFAULT_ADMIN_ROLE, account) && (LibDiamond.diamondStorage().contractOwner == account)) {
+            revert CannotRevokeAdminRole();
+        }
         super.revokeRole(role, account);
     }
+
+    // Custom Error for modifier
+    error OnlySuperAdminAllowed();
 
     /**
      * @notice Modifier to restrict access to functions for the super admin.
      * @dev Ensures that the caller is the owner defined in the `LibDiamond` storage.
      */
     modifier onlySuperAdminRole {
-        require(LibDiamond.diamondStorage().contractOwner == msg.sender, "Only SuperAdmin allowed");
+        if (LibDiamond.diamondStorage().contractOwner != msg.sender) {
+            revert OnlySuperAdminAllowed();
+        }
         _;
     }
 }

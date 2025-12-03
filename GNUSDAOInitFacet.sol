@@ -18,6 +18,9 @@ contract GNUSDAOInitFacet is Initializable, ContextUpgradeable, AccessControlEnu
     /// @dev Keccak256 hash of "UPGRADER_ROLE"
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
+    // Custom Errors
+    error OnlySuperAdminAllowed();
+
     /// @notice Emitted when initialization functions are called
     /// @param sender Address that triggered the initialization
     /// @param initializer Name of the initialization function called
@@ -26,7 +29,9 @@ contract GNUSDAOInitFacet is Initializable, ContextUpgradeable, AccessControlEnu
     /// @notice Restricts function access to the contract owner
     /// @dev Uses LibDiamond storage to verify ownership
     modifier onlySuperAdminRole {
-        require(LibDiamond.diamondStorage().contractOwner == _msgSender(), "Only SuperAdmin allowed");
+        if (LibDiamond.diamondStorage().contractOwner != _msgSender()) {
+            revert OnlySuperAdminAllowed();
+        }
         _;
     }
 
@@ -38,8 +43,8 @@ contract GNUSDAOInitFacet is Initializable, ContextUpgradeable, AccessControlEnu
         emit InitLog(sender, "diamondInitialize000 Function called");
 
         // Set up roles and permissions
-        _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        _setupRole(UPGRADER_ROLE, _msgSender());
+        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _grantRole(UPGRADER_ROLE, _msgSender());
 
         // Enable ERC20 interface support as example
         LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;
@@ -53,8 +58,8 @@ contract GNUSDAOInitFacet is Initializable, ContextUpgradeable, AccessControlEnu
         emit InitLog(sender, "diamondInitialize100 Function called");
 
         // Set up roles and permissions
-        _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        _setupRole(UPGRADER_ROLE, _msgSender());
+        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _grantRole(UPGRADER_ROLE, _msgSender());
 
         // Enable ERC20 interface support
         LibDiamond.diamondStorage().supportedInterfaces[type(IERC20Upgradeable).interfaceId] = true;

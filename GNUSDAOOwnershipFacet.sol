@@ -3,13 +3,16 @@ pragma solidity ^0.8.0;
 
 import { LibDiamond } from "contracts-starter/contracts/libraries/LibDiamond.sol";
 import { IERC173 } from "contracts-starter/contracts/interfaces/IERC173.sol";
-import "./GNUSDAOAccessControlFacet.sol";
-import "./GNUSDAOConstantsFacet.sol";
+import { GNUSDAOAccessControlFacet } from "./GNUSDAOAccessControlFacet.sol";
 
 /// @title GNUSDAOOwnershipFacet
+/// @author GNUSDAO Team
 /// @notice Provides ownership management for the GNUSDAO contract using EIP-173 standards.
 /// @dev Extends AccessControl for role-based permissions and integrates with the Diamond Standard.
 contract GNUSDAOOwnershipFacet is IERC173, GNUSDAOAccessControlFacet {
+    
+    // Custom Errors
+    error ZeroAddressOwner();
     /**
      * @notice Transfers contract ownership to a new address.
      * @param _newOwner The address of the new owner.
@@ -21,7 +24,9 @@ contract GNUSDAOOwnershipFacet is IERC173, GNUSDAOAccessControlFacet {
         LibDiamond.enforceIsContractOwner();
 
         // Prevent transferring ownership to zero address
-        require(_newOwner != address(0), "New owner cannot be zero address");
+        if (_newOwner == address(0)) {
+            revert ZeroAddressOwner();
+        }
 
         // Store previous owner for event emission
         address previousOwner = msg.sender;
