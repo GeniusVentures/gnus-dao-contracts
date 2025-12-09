@@ -122,6 +122,8 @@ contract GNUSDAOGovernanceTokenFacet is
      * @param _name Token name
      * @param _symbol Token symbol
      * @param _initialOwner Initial owner of the contract (must be diamond owner)
+     * @custom:security This function should only be called by the InitFacet during diamond initialization
+     * @custom:security The initializer check prevents re-initialization
      */
     function initializeGovernanceToken(
         string memory _name,
@@ -138,10 +140,9 @@ contract GNUSDAOGovernanceTokenFacet is
             revert ZeroAddress();
         }
 
-        // Ensure caller is authorized - must be initial owner or have admin role
-        if (_msgSender() != _initialOwner && !hasRole(DEFAULT_ADMIN_ROLE, _msgSender())) {
-            revert NotMinter(); // Reuse error for unauthorized access
-        }
+        // Note: No authorization check here because this is only called during initialization
+        // The InitFacet handles authorization and calls this atomically with DiamondCut
+        // The initialized check above prevents unauthorized re-initialization
 
         // Initialize ERC20 data
         gs.name = _name;

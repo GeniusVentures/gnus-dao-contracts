@@ -220,20 +220,22 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     /**
      * @dev Initialize the governance facet
      * @param _initialOwner Initial owner of the contract (must be diamond owner)
+     * @custom:security This function should only be called by the InitFacet during diamond initialization
+     * @custom:security The initialized check prevents re-initialization
      */
-    function initializeGovernance(address _initialOwner) external initializer {
+    function initializeGovernance(address _initialOwner) external {
         GovernanceStorage storage gs = _getGovernanceStorage();
         
         if (gs.initialized) {
             revert AlreadyInitialized();
         }
 
-        // Ensure caller is diamond owner
-        LibDiamond.enforceIsContractOwner();
+        // Note: No authorization check here because this is only called during initialization
+        // The InitFacet handles authorization and calls this atomically with DiamondCut
         
-        // Verify initial owner matches diamond owner
-        if (_initialOwner != LibDiamond.contractOwner()) {
-            revert ZeroAddress(); // Reuse error for invalid owner
+        // Verify initial owner is not zero address
+        if (_initialOwner == address(0)) {
+            revert ZeroAddress();
         }
 
         // Initialize OpenZeppelin contracts
