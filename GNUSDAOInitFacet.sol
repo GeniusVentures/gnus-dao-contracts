@@ -90,19 +90,5 @@ contract GNUSDAOInitFacet is Initializable, ContextUpgradeable, AccessControlEnu
         IGNUSDAOGovernanceFacet(address(this)).initializeGovernance(sender);
     }
 
-    /// @notice Initializes the diamond with version 1.0.0
-    /// @dev Sets up roles and permissions for version 1.0.0
-    /// @param tokenName Name for the governance token
-    /// @param tokenSymbol Symbol for the governance token
-    /// @custom:security Protected by initializer modifier to prevent re-initialization
-    /// @custom:security All facet initialization happens in one transaction with DiamondCut
-    function diamondInitialize100(
-        string memory tokenName,
-        string memory tokenSymbol
-    ) public initializer {
-        address sender = _msgSender();
-        emit InitLog(sender, "diamondInitialize100 Function called");
-        // Set up initial roles and permissions for version 1.0.0 by calling 0.0.0 initializer
-        diamondInitialize000(tokenName, tokenSymbol);
-    }
+
 }
