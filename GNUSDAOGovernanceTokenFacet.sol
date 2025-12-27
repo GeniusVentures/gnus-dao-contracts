@@ -8,14 +8,12 @@ import {GNUSDAOAccessControlFacet} from "./GNUSDAOAccessControlFacet.sol";
 
 /**
  * @title GNUSDAOGovernanceTokenFacet
- * @dev Diamond facet for ERC20 governance token with voting capabilities
- * Adapted from Decentralized_Voting_DAO GovernanceToken contract
+ * @dev Diamond facet for ERC20 governance token with voting capabilities.
  * Features:
- * - Vote delegation and checkpointing
- * - Minting and burning capabilities
- * - Pausable transfers for emergency situations
- * - Permit functionality for gasless approvals
- * - Integration with Diamond storage pattern
+ * - Vote delegation and checkpointing for historical voting power.
+ * - Minting and burning capabilities with role-based access control.
+ * - Pausable transfers for emergency situations.
+ * - Integration with Diamond storage pattern.
  */
 contract GNUSDAOGovernanceTokenFacet is
     IERC20Upgradeable,
@@ -75,6 +73,10 @@ contract GNUSDAOGovernanceTokenFacet is
     bytes32 private constant GOVERNANCE_TOKEN_STORAGE_SLOT = 
         keccak256("gnusdao.storage.governancetoken");
     
+    /**
+     * @dev Internal helper to access governance token storage.
+     * @return gs Pointer to the GovernanceTokenStorage struct in diamond storage.
+     */
     function _getGovernanceTokenStorage() internal pure returns (GovernanceTokenStorage storage gs) {
         bytes32 slot = GOVERNANCE_TOKEN_STORAGE_SLOT;
         assembly {
@@ -203,7 +205,9 @@ contract GNUSDAOGovernanceTokenFacet is
     }
 
     /**
-     * @dev Returns the balance of an account
+     * @dev Returns the balance of an account.
+     * @param account The address of the account to check.
+     * @return The number of tokens owned by `account`.
      */
     function balanceOf(address account) public view override returns (uint256) {
         GovernanceTokenStorage storage gs = _getGovernanceTokenStorage();
@@ -211,7 +215,10 @@ contract GNUSDAOGovernanceTokenFacet is
     }
 
     /**
-     * @dev Returns the allowance of a spender for an owner
+     * @dev Returns the allowance of a spender for an owner.
+     * @param owner The address of the token owner.
+     * @param spender The address of the authorized spender.
+     * @return The remaining number of tokens that `spender` is allowed to spend on behalf of `owner`.
      */
     function allowance(address owner, address spender) public view override returns (uint256) {
         GovernanceTokenStorage storage gs = _getGovernanceTokenStorage();
@@ -227,7 +234,10 @@ contract GNUSDAOGovernanceTokenFacet is
     }
 
     /**
-     * @dev Approve spender to spend tokens
+     * @dev Approve spender to spend tokens.
+     * @param spender The address of the authorized spender.
+     * @param amount The number of tokens `spender` is allowed to spend.
+     * @return True if the operation succeeded.
      */
     function approve(address spender, uint256 amount) public override returns (bool) {
         _approve(msg.sender, spender, amount);
@@ -474,9 +484,9 @@ contract GNUSDAOGovernanceTokenFacet is
     }
 
     /**
-     * @dev Get current votes balance for an account
-     * @param account Address to check voting power for
-     * @return Current voting power
+     * @notice Returns the current voting power for an account.
+     * @param account The address of the account to check.
+     * @return The current voting power of the specified account.
      */
     function getVotingPower(address account) external view returns (uint256) {
         GovernanceTokenStorage storage gs = _getGovernanceTokenStorage();
@@ -635,9 +645,9 @@ contract GNUSDAOGovernanceTokenFacet is
     }
     
     /**
-     * @dev Check if address is a minter
-     * @param account Address to check
-     * @return True if address is a minter
+     * @notice Checks if an address is authorized as a minter.
+     * @param account The address to check.
+     * @return True if the address has the minter role.
      */
     function isMinter(address account) external view returns (bool) {
         GovernanceTokenStorage storage gs = _getGovernanceTokenStorage();

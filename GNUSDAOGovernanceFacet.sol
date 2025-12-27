@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {ReentrancyGuardUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/security/ReentrancyGuardUpgradeable.sol";
-import {PausableUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/security/PausableUpgradeable.sol";
+import {
+    ReentrancyGuardUpgradeable
+} from "@gnus.ai/contracts-upgradeable-diamond/security/ReentrancyGuardUpgradeable.sol";
+import {
+    PausableUpgradeable
+} from "@gnus.ai/contracts-upgradeable-diamond/security/PausableUpgradeable.sol";
 import {Initializable} from "@gnus.ai/contracts-upgradeable-diamond/proxy/utils/Initializable.sol";
 import "contracts-starter/contracts/libraries/LibDiamond.sol";
 
@@ -21,14 +25,16 @@ import "contracts-starter/contracts/libraries/LibDiamond.sol";
 interface IGovernanceTokenFacet {
     function balanceOf(address account) external view returns (uint256);
     function getVotingPower(address account) external view returns (uint256);
-    function getPastVotingPower(address account, uint256 blockNumber) external view returns (uint256);
+    function getPastVotingPower(
+        address account,
+        uint256 blockNumber
+    ) external view returns (uint256);
     function burnFrom(address from, uint256 amount) external;
     function delegate(address delegatee) external;
     function getDelegates(address account) external view returns (address);
 }
 
 contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable {
-
     // Custom Errors
     error AlreadyInitialized();
     error NotTreasuryManager();
@@ -74,10 +80,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
     /// @notice Represents a single action to be executed as part of a proposal
     struct ProposalAction {
-        address target;      // Contract address to call
-        uint256 value;       // ETH value to send with the call
-        bytes data;          // Encoded function call data
-        string description;  // Human-readable description of the action
+        address target; // Contract address to call
+        uint256 value; // ETH value to send with the call
+        bytes data; // Encoded function call data
+        string description; // Human-readable description of the action
     }
 
     /// @notice Represents a governance proposal with voting and execution data
@@ -92,24 +98,24 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         uint256 totalVoters;
         bool executed;
         bool cancelled;
-        bool queued;                    // Whether proposal is queued for execution
-        uint256 queuedTime;             // Timestamp when proposal was queued
-        ProposalAction[] actions;       // Array of actions to execute
+        bool queued; // Whether proposal is queued for execution
+        uint256 queuedTime; // Timestamp when proposal was queued
+        ProposalAction[] actions; // Array of actions to execute
         mapping(address => uint256) votes;
         mapping(address => bool) hasVoted;
     }
-    
+
     struct VotingConfig {
-        uint256 proposalThreshold;      // Minimum tokens to create proposal
-        uint256 votingDelay;           // Delay before voting starts (in blocks)
-        uint256 votingPeriod;          // Voting duration (in blocks)
-        uint256 quorumThreshold;       // Minimum participation for valid proposal
-        uint256 maxVotesPerWallet;     // Maximum votes per wallet (Sybil resistance)
-        uint256 proposalCooldown;      // Cooldown between proposals from same address
-        uint256 timelockDelay;         // Delay between queuing and execution (in seconds)
-        uint256 maxProposalActions;    // Maximum number of actions per proposal
+        uint256 proposalThreshold; // Minimum tokens to create proposal
+        uint256 votingDelay; // Delay before voting starts (in blocks)
+        uint256 votingPeriod; // Voting duration (in blocks)
+        uint256 quorumThreshold; // Minimum participation for valid proposal
+        uint256 maxVotesPerWallet; // Maximum votes per wallet (Sybil resistance)
+        uint256 proposalCooldown; // Cooldown between proposals from same address
+        uint256 timelockDelay; // Delay between queuing and execution (in seconds)
+        uint256 maxProposalActions; // Maximum number of actions per proposal
     }
-    
+
     // Storage struct for Diamond pattern
     struct GovernanceStorage {
         VotingConfig votingConfig;
@@ -121,18 +127,17 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         bool initialized;
         bool paused;
     }
-    
+
     // Storage slot for Diamond pattern
-    bytes32 private constant GOVERNANCE_STORAGE_SLOT = 
-        keccak256("gnusdao.storage.governance");
-    
+    bytes32 private constant GOVERNANCE_STORAGE_SLOT = keccak256("gnusdao.storage.governance");
+
     function _getGovernanceStorage() internal pure returns (GovernanceStorage storage gs) {
         bytes32 slot = GOVERNANCE_STORAGE_SLOT;
         assembly {
             gs.slot := slot
         }
     }
-    
+
     // Events
     event ProposalCreated(
         uint256 indexed proposalId,
@@ -142,21 +147,27 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         uint256 startTime,
         uint256 endTime
     );
-    
+
     event VoteCast(
         uint256 indexed proposalId,
         address indexed voter,
         uint256 votes,
         uint256 tokensCost
     );
-    
+
     event VoteDelegated(address indexed delegator, address indexed delegatee);
     event VoteDelegationRevoked(address indexed delegator, address indexed delegatee);
 
     event ProposalQueued(uint256 indexed proposalId, uint256 executionTime);
     event ProposalExecuted(uint256 indexed proposalId);
     event ProposalCancelled(uint256 indexed proposalId);
-    event ActionExecuted(uint256 indexed proposalId, uint256 indexed actionIndex, address target, uint256 value, bytes data);
+    event ActionExecuted(
+        uint256 indexed proposalId,
+        uint256 indexed actionIndex,
+        address target,
+        uint256 value,
+        bytes data
+    );
 
     event TreasuryDeposit(address indexed from, uint256 amount);
     event TreasuryWithdrawal(address indexed to, uint256 amount);
@@ -171,13 +182,13 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     event VotingDelayUpdated(uint256 oldDelay, uint256 newDelay);
     event VotingPeriodUpdated(uint256 oldPeriod, uint256 newPeriod);
     event MaxVotesPerWalletUpdated(uint256 oldMax, uint256 newMax);
-    
+
     // Modifiers
     modifier onlyOwner() {
         LibDiamond.enforceIsContractOwner();
         _;
     }
-    
+
     modifier onlyTreasuryManager() {
         GovernanceStorage storage gs = _getGovernanceStorage();
         if (!gs.treasuryManagers[_msgSender()] && _msgSender() != LibDiamond.contractOwner()) {
@@ -185,7 +196,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
         _;
     }
-    
+
     modifier proposalExists(uint256 proposalId) {
         GovernanceStorage storage gs = _getGovernanceStorage();
         if (proposalId == 0 || proposalId > gs.proposalCount) {
@@ -193,7 +204,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
         _;
     }
-    
+
     modifier votingActive(uint256 proposalId) {
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
@@ -216,7 +227,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
         _;
     }
-    
+
     /**
      * @dev Initialize the governance facet
      * @param _initialOwner Initial owner of the contract (must be diamond owner)
@@ -225,14 +236,14 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      */
     function initializeGovernance(address _initialOwner) external {
         GovernanceStorage storage gs = _getGovernanceStorage();
-        
+
         if (gs.initialized) {
             revert AlreadyInitialized();
         }
 
         // Note: No authorization check here because this is only called during initialization
         // The InitFacet handles authorization and calls this atomically with DiamondCut
-        
+
         // Verify initial owner is not zero address
         if (_initialOwner == address(0)) {
             revert ZeroAddress();
@@ -241,23 +252,23 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         // Initialize OpenZeppelin contracts
         __ReentrancyGuard_init();
         __Pausable_init();
-        
+
         // Set default voting configuration
         gs.votingConfig = VotingConfig({
-            proposalThreshold: 1000 * 10**18,    // 1,000 tokens to create proposal
-            votingDelay: 1 days,                 // 1 day delay before voting starts
-            votingPeriod: 7 days,                // 7 days voting period
-            quorumThreshold: 1000,               // 1,000 votes minimum (vote count, not tokens)
-            maxVotesPerWallet: 10000,            // Maximum 10,000 votes per wallet
-            proposalCooldown: 1 days,            // 1 day cooldown between proposals
-            timelockDelay: 2 days,               // 2 days timelock delay for execution
-            maxProposalActions: 10               // Maximum 10 actions per proposal
+            proposalThreshold: 1000 * 10 ** 18, // 1,000 tokens to create proposal
+            votingDelay: 1 days, // 1 day delay before voting starts
+            votingPeriod: 7 days, // 7 days voting period
+            quorumThreshold: 1000, // 1,000 votes minimum (vote count, not tokens)
+            maxVotesPerWallet: 10000, // Maximum 10,000 votes per wallet
+            proposalCooldown: 1 days, // 1 day cooldown between proposals
+            timelockDelay: 2 days, // 2 days timelock delay for execution
+            maxProposalActions: 10 // Maximum 10 actions per proposal
         });
-        
+
         gs.initialized = true;
         gs.paused = false;
     }
-    
+
     /**
      * @dev Create a new proposal with executable actions
      * @param title Proposal title
@@ -291,7 +302,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         GovernanceStorage storage gs = _getGovernanceStorage();
 
         // Check cooldown FIRST to prevent oracle attacks
-        if (block.timestamp < gs.lastProposalTime[_msgSender()] + gs.votingConfig.proposalCooldown) {
+        if (
+            block.timestamp < gs.lastProposalTime[_msgSender()] + gs.votingConfig.proposalCooldown
+        ) {
             revert CooldownNotMet();
         }
 
@@ -303,7 +316,11 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
         // Validate actions arrays have matching lengths
         uint256 actionsLength = targets.length;
-        if (actionsLength != values.length || actionsLength != calldatas.length || actionsLength != descriptions.length) {
+        if (
+            actionsLength != values.length ||
+            actionsLength != calldatas.length ||
+            actionsLength != descriptions.length
+        ) {
             revert InvalidActionIndex();
         }
 
@@ -321,7 +338,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
                 }
                 totalValue += values[i];
             }
-            
+
             // Check if total value exceeds available treasury
             if (totalValue > gs.treasuryBalance) {
                 revert InsufficientTreasuryBalance();
@@ -343,12 +360,14 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
         // Store actions
         for (uint256 i = 0; i < actionsLength; i++) {
-            newProposal.actions.push(ProposalAction({
-                target: targets[i],
-                value: values[i],
-                data: calldatas[i],
-                description: descriptions[i]
-            }));
+            newProposal.actions.push(
+                ProposalAction({
+                    target: targets[i],
+                    value: values[i],
+                    data: calldatas[i],
+                    description: descriptions[i]
+                })
+            );
         }
 
         gs.lastProposalTime[_msgSender()] = block.timestamp;
@@ -364,7 +383,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
         return proposalId;
     }
-    
+
     /**
      * @dev Vote on a proposal using quadratic voting
      * @param proposalId ID of the proposal to vote on
@@ -373,7 +392,13 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     function vote(
         uint256 proposalId,
         uint256 votes
-    ) external proposalExists(proposalId) votingActive(proposalId) whenNotPausedCustom nonReentrant {
+    )
+        external
+        proposalExists(proposalId)
+        votingActive(proposalId)
+        whenNotPausedCustom
+        nonReentrant
+    {
         if (votes == 0) {
             revert ZeroVotes();
         }
@@ -399,11 +424,11 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
         // Calculate quadratic cost: cost = votes²
         uint256 voteCost = votes * votes;
-        
+
         // Check for overflow before multiplying by 10^18
         // voteCost is at most (1e15)^2 = 1e30
         // 1e30 * 1e18 = 1e48, which is safe for uint256
-        uint256 tokensCost = voteCost * 10**18; // Convert to wei
+        uint256 tokensCost = voteCost * 10 ** 18; // Convert to wei
 
         // Check voting power at proposal start time (prevents flash loan attacks)
         // Use block number from start time (approximate - use current block if start time is in future)
@@ -421,7 +446,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
         // Burn tokens for quadratic cost - call governance token facet
         _burnFrom(_msgSender(), tokensCost);
-        
+
         emit VoteCast(proposalId, _msgSender(), votes, tokensCost);
     }
 
@@ -454,7 +479,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     function revokeDelegation() external {
         IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
         address currentDelegate = tokenFacet.getDelegates(_msgSender());
-        
+
         // Check if user is delegating to someone else (not self)
         if (currentDelegate == address(0) || currentDelegate == _msgSender()) {
             revert NoActiveDelegation();
@@ -511,7 +536,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @notice Executes all actions in the proposal sequentially
      * @notice Proposal must be queued and timelock delay must have passed
      */
-    function executeProposal(uint256 proposalId) external payable proposalExists(proposalId) whenNotPausedCustom nonReentrant onlyOwner {
+    function executeProposal(
+        uint256 proposalId
+    ) external payable proposalExists(proposalId) whenNotPausedCustom nonReentrant {
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
 
@@ -556,7 +583,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             gs.treasuryBalance -= action.value;
 
             // Execute the action
-            (bool success, bytes memory returnData) = action.target.call{value: action.value}(action.data);
+            (bool success, bytes memory returnData) = action.target.call{value: action.value}(
+                action.data
+            );
 
             if (!success) {
                 // If the call failed, revert with detailed error
@@ -647,7 +676,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         if (newDelay < 1 days || newDelay > 30 days) {
             revert ZeroAmount(); // Reuse error for invalid delay
         }
-        
+
         GovernanceStorage storage gs = _getGovernanceStorage();
         uint256 oldDelay = gs.votingConfig.timelockDelay;
         gs.votingConfig.timelockDelay = newDelay;
@@ -661,10 +690,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @notice Minimum threshold is 100 tokens to prevent spam
      */
     function updateProposalThreshold(uint256 newThreshold) external onlyOwner {
-        if (newThreshold < 100 * 10**18) {
+        if (newThreshold < 100 * 10 ** 18) {
             revert ZeroAmount(); // Reuse error for invalid threshold
         }
-        
+
         GovernanceStorage storage gs = _getGovernanceStorage();
         uint256 oldThreshold = gs.votingConfig.proposalThreshold;
         gs.votingConfig.proposalThreshold = newThreshold;
@@ -681,7 +710,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         if (newThreshold < 100) {
             revert ZeroAmount(); // Reuse error for invalid threshold
         }
-        
+
         GovernanceStorage storage gs = _getGovernanceStorage();
         uint256 oldThreshold = gs.votingConfig.quorumThreshold;
         gs.votingConfig.quorumThreshold = newThreshold;
@@ -698,7 +727,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         if (newDelay < 1 hours || newDelay > 7 days) {
             revert ZeroAmount(); // Reuse error for invalid delay
         }
-        
+
         GovernanceStorage storage gs = _getGovernanceStorage();
         uint256 oldDelay = gs.votingConfig.votingDelay;
         gs.votingConfig.votingDelay = newDelay;
@@ -715,7 +744,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         if (newPeriod < 1 days || newPeriod > 30 days) {
             revert ZeroAmount(); // Reuse error for invalid period
         }
-        
+
         GovernanceStorage storage gs = _getGovernanceStorage();
         uint256 oldPeriod = gs.votingConfig.votingPeriod;
         gs.votingConfig.votingPeriod = newPeriod;
@@ -732,7 +761,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         if (newMax < 100 || newMax > 1000000) {
             revert ZeroAmount(); // Reuse error for invalid max
         }
-        
+
         GovernanceStorage storage gs = _getGovernanceStorage();
         uint256 oldMax = gs.votingConfig.maxVotesPerWallet;
         gs.votingConfig.maxVotesPerWallet = newMax;
@@ -840,7 +869,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @notice For contract recipients, use the proposal execution system instead
      */
     // slither-disable-next-line arbitrary-send-eth
-    function withdrawFromTreasury(address payable to, uint256 amount) external onlyTreasuryManager nonReentrant {
+    function withdrawFromTreasury(
+        address payable to,
+        uint256 amount
+    ) external onlyTreasuryManager nonReentrant {
         if (to == address(0)) {
             revert ZeroAddress();
         }
@@ -874,36 +906,40 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @dev Get basic proposal details
      * @param proposalId ID of the proposal
      */
-    function getProposalBasic(uint256 proposalId) external view proposalExists(proposalId) returns (
-        uint256 id,
-        address proposer,
-        string memory title,
-        string memory ipfsHash
-    ) {
+    function getProposalBasic(
+        uint256 proposalId
+    )
+        external
+        view
+        proposalExists(proposalId)
+        returns (uint256 id, address proposer, string memory title, string memory ipfsHash)
+    {
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
-        return (
-            proposal.id,
-            proposal.proposer,
-            proposal.title,
-            proposal.ipfsHash
-        );
+        return (proposal.id, proposal.proposer, proposal.title, proposal.ipfsHash);
     }
 
     /**
      * @dev Get proposal timing and status
      * @param proposalId ID of the proposal
      */
-    function getProposalStatus(uint256 proposalId) external view proposalExists(proposalId) returns (
-        uint256 startTime,
-        uint256 endTime,
-        uint256 totalVotes,
-        uint256 totalVoters,
-        bool executed,
-        bool cancelled,
-        bool queued,
-        uint256 queuedTime
-    ) {
+    function getProposalStatus(
+        uint256 proposalId
+    )
+        external
+        view
+        proposalExists(proposalId)
+        returns (
+            uint256 startTime,
+            uint256 endTime,
+            uint256 totalVotes,
+            uint256 totalVoters,
+            bool executed,
+            bool cancelled,
+            bool queued,
+            uint256 queuedTime
+        )
+    {
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
         return (
@@ -926,12 +962,19 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @return calldatas Array of encoded function calls
      * @return descriptions Array of action descriptions
      */
-    function getProposalActions(uint256 proposalId) external view proposalExists(proposalId) returns (
-        address[] memory targets,
-        uint256[] memory values,
-        bytes[] memory calldatas,
-        string[] memory descriptions
-    ) {
+    function getProposalActions(
+        uint256 proposalId
+    )
+        external
+        view
+        proposalExists(proposalId)
+        returns (
+            address[] memory targets,
+            uint256[] memory values,
+            bytes[] memory calldatas,
+            string[] memory descriptions
+        )
+    {
         GovernanceStorage storage gs = _getGovernanceStorage();
         Proposal storage proposal = gs.proposals[proposalId];
 
@@ -956,7 +999,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @dev Get number of actions in a proposal
      * @param proposalId ID of the proposal
      */
-    function getProposalActionsCount(uint256 proposalId) external view proposalExists(proposalId) returns (uint256) {
+    function getProposalActionsCount(
+        uint256 proposalId
+    ) external view proposalExists(proposalId) returns (uint256) {
         GovernanceStorage storage gs = _getGovernanceStorage();
         return gs.proposals[proposalId].actions.length;
     }
@@ -966,7 +1011,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @param proposalId ID of the proposal
      * @param voter Address of the voter
      */
-    function getVote(uint256 proposalId, address voter) external view proposalExists(proposalId) returns (uint256) {
+    function getVote(
+        uint256 proposalId,
+        address voter
+    ) external view proposalExists(proposalId) returns (uint256) {
         GovernanceStorage storage gs = _getGovernanceStorage();
         return gs.proposals[proposalId].votes[voter];
     }
@@ -976,7 +1024,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @param proposalId ID of the proposal
      * @param voter Address of the voter
      */
-    function hasVoted(uint256 proposalId, address voter) external view proposalExists(proposalId) returns (bool) {
+    function hasVoted(
+        uint256 proposalId,
+        address voter
+    ) external view proposalExists(proposalId) returns (bool) {
         GovernanceStorage storage gs = _getGovernanceStorage();
         return gs.proposals[proposalId].hasVoted[voter];
     }
@@ -1023,17 +1074,17 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     function reconcileTreasuryBalance() external onlyOwner {
         GovernanceStorage storage gs = _getGovernanceStorage();
         uint256 actualBalance = address(this).balance;
-        
+
         // Sync tracked balance to actual balance
         if (actualBalance != gs.treasuryBalance) {
             uint256 oldBalance = gs.treasuryBalance;
             int256 difference = int256(actualBalance) - int256(oldBalance);
-            
+
             gs.treasuryBalance = actualBalance;
-            
+
             // Emit specific reconciliation event for transparency
             emit TreasuryReconciled(oldBalance, actualBalance, difference);
-            
+
             // Also emit standard events for tracking
             if (actualBalance > oldBalance) {
                 emit TreasuryDeposit(address(0), actualBalance - oldBalance);
@@ -1092,7 +1143,10 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @param blockNumber Block number to check at
      * @return Voting power of the account at the specified block
      */
-    function _getPastVotingPower(address account, uint256 blockNumber) internal view returns (uint256) {
+    function _getPastVotingPower(
+        address account,
+        uint256 blockNumber
+    ) internal view returns (uint256) {
         IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
         return tokenFacet.getPastVotingPower(account, blockNumber);
     }

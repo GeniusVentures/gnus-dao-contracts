@@ -2,6 +2,8 @@
 pragma solidity ^0.8.2;
 
 import {AccessControlEnumerableUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/access/AccessControlEnumerableUpgradeable.sol";
+import {AccessControlUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/access/AccessControlUpgradeable.sol";
+import {IAccessControlUpgradeable} from "@gnus.ai/contracts-upgradeable-diamond/access/IAccessControlUpgradeable.sol";
 import {Initializable} from "@gnus.ai/contracts-upgradeable-diamond/proxy/utils/Initializable.sol";
 import {LibDiamond} from "contracts-starter/contracts/libraries/LibDiamond.sol";
 
@@ -48,7 +50,7 @@ contract GNUSDAOAccessControlFacet is Initializable, AccessControlEnumerableUpgr
      * @param account The account renouncing the role.
      */
     // solhint-disable-next-line no-complex-inheritance
-    function renounceRole(bytes32 role, address account) public override {
+    function renounceRole(bytes32 role, address account) public override(AccessControlUpgradeable, IAccessControlUpgradeable) {
         if (hasRole(DEFAULT_ADMIN_ROLE, account) && (LibDiamond.diamondStorage().contractOwner == account)) {
             revert CannotRenounceAdminRole();
         }
@@ -63,7 +65,7 @@ contract GNUSDAOAccessControlFacet is Initializable, AccessControlEnumerableUpgr
      * @param account The account losing the role.
      */
     // solhint-disable-next-line no-complex-inheritance
-    function revokeRole(bytes32 role, address account) public override {
+    function revokeRole(bytes32 role, address account) public override(AccessControlUpgradeable, IAccessControlUpgradeable) {
         if (hasRole(DEFAULT_ADMIN_ROLE, account) && (LibDiamond.diamondStorage().contractOwner == account)) {
             revert CannotRevokeAdminRole();
         }
