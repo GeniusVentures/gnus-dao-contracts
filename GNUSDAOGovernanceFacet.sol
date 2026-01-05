@@ -843,6 +843,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         if (msg.value == 0) {
             revert ZeroAmount();
         }
+    // slither-disable-next-line arbitrary-send-eth
         GovernanceStorage storage gs = _getGovernanceStorage();
         gs.treasuryBalance += msg.value;
         emit TreasuryDeposit(_msgSender(), msg.value);
@@ -868,11 +869,11 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @notice Only allows withdrawals to EOA addresses to prevent reentrancy attacks
      * @notice For contract recipients, use the proposal execution system instead
      */
-    // slither-disable-next-line arbitrary-send-eth
     function withdrawFromTreasury(
         address payable to,
         uint256 amount
     ) external onlyTreasuryManager nonReentrant {
+        // slither-disable-line arbitrary-send-eth
         if (to == address(0)) {
             revert ZeroAddress();
         }
