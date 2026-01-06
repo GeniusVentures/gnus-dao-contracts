@@ -873,7 +873,6 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         address payable to,
         uint256 amount
     ) external onlyTreasuryManager nonReentrant {
-        // slither-disable-line arbitrary-send-eth
         if (to == address(0)) {
             revert ZeroAddress();
         }
@@ -893,6 +892,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
         // Use .call() instead of .transfer() to avoid 2300 gas limit
         // Safe from reentrancy because recipient is verified to be an EOA
+        // slither-disable-next-line arbitrary-send-eth
         (bool success, ) = to.call{value: amount}("");
         if (!success) {
             revert TreasuryWithdrawalFailed();
