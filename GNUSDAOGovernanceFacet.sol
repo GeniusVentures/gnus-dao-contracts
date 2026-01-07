@@ -837,13 +837,21 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     }
 
     /**
-     * @dev Deposit ETH to treasury
+     * @notice Deposit ETH to the DAO treasury
+     * @dev Allows anyone to contribute ETH to the treasury balance
+     * @dev Updates the tracked treasury balance and emits an event
+     * @dev Reverts if no ETH is sent with the transaction
+     * @custom:security Only accepts ETH deposits, no reentrancy risk
+     * @custom:events Emits TreasuryDeposit event with sender and amount
      */
     function depositToTreasury() external payable {
         if (msg.value == 0) {
             revert ZeroAmount();
         }
-    // slither-disable-next-line arbitrary-send-eth
+        
+        // slither-disable-next-line arbitrary-send-eth
+        // Suppression justified: This is not sending ETH, it's receiving and tracking deposits
+        // The function only updates internal state and emits events, no external calls
         GovernanceStorage storage gs = _getGovernanceStorage();
         gs.treasuryBalance += msg.value;
         emit TreasuryDeposit(_msgSender(), msg.value);
@@ -892,6 +900,12 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
 
         // Use .call() instead of .transfer() to avoid 2300 gas limit
         // Safe from reentrancy because recipient is verified to be an EOA
+        // Suppression justified: This is a controlled treasury withdrawal with multiple safeguards:
+        // 1. onlyTreasuryManager access control restricts who can call this function
+        // 2. nonReentrant modifier prevents reentrancy attacks
+        // 3. _isContract() check ensures recipient is EOA, not a contract
+        // 4. Amount validation ensures sufficient treasury balance
+        // 5. This is the intended treasury withdrawal mechanism for the DAO
         // slither-disable-next-line arbitrary-send-eth
         (bool success, ) = to.call{value: amount}("");
         if (!success) {
