@@ -6,7 +6,6 @@ pragma solidity ^0.8.0;
 /**
  * @title GNUSDAOVotingMechanismsFacet
  * @dev Diamond facet for advanced voting calculations and mechanisms
- * Adapted from Decentralized_Voting_DAO VotingMechanisms library
  * Features:
  * - Quadratic voting cost calculations
  * - Vote weight calculations

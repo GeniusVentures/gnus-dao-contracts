@@ -13,7 +13,6 @@ import "contracts-starter/contracts/libraries/LibDiamond.sol";
 /**
  * @title GNUSDAOGovernanceFacet
  * @dev Diamond facet for DAO governance with quadratic voting and Sybil resistance
- * Adapted from Decentralized_Voting_DAO DAOGovernance contract
  * Features:
  * - Proposal creation with IPFS metadata
  * - Quadratic voting mechanism (cost = votes²)
@@ -1179,6 +1178,60 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         // Using 'this' routes through the diamond to the correct facet
         IGovernanceTokenFacet tokenFacet = IGovernanceTokenFacet(address(this));
         tokenFacet.burnFrom(from, amount);
+    }
+
+    /**
+     * @dev Update proposal cooldown
+     * @param newCooldown New cooldown in seconds (min 1 hour, max 7 days)
+     */
+    function updateProposalCooldown(uint256 newCooldown) external onlyOwner {
+        if (newCooldown < 1 hours || newCooldown > 7 days) {
+            revert ZeroAmount();
+        }
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        gs.votingConfig.proposalCooldown = newCooldown;
+    }
+
+    /**
+     * @dev Get voting delay in seconds
+     */
+    function getVotingDelay() external view returns (uint256) {
+        return _getGovernanceStorage().votingConfig.votingDelay;
+    }
+
+    /**
+     * @dev Get voting period in seconds
+     */
+    function getVotingPeriod() external view returns (uint256) {
+        return _getGovernanceStorage().votingConfig.votingPeriod;
+    }
+
+    /**
+     * @dev Get quorum threshold (minimum votes for a valid proposal)
+     */
+    function getQuorumThreshold() external view returns (uint256) {
+        return _getGovernanceStorage().votingConfig.quorumThreshold;
+    }
+
+    /**
+     * @dev Get proposal threshold (minimum tokens to create a proposal)
+     */
+    function getProposalThreshold() external view returns (uint256) {
+        return _getGovernanceStorage().votingConfig.proposalThreshold;
+    }
+
+    /**
+     * @dev Get timelock delay in seconds
+     */
+    function getTimelockDelay() external view returns (uint256) {
+        return _getGovernanceStorage().votingConfig.timelockDelay;
+    }
+
+    /**
+     * @dev Get maximum votes per wallet (Sybil resistance)
+     */
+    function getMaxVotesPerWallet() external view returns (uint256) {
+        return _getGovernanceStorage().votingConfig.maxVotesPerWallet;
     }
 
     // Receive function to accept ETH deposits

@@ -491,7 +491,16 @@ contract GNUSDAOGovernanceTokenFacet is
     function getVotingPower(address account) external view returns (uint256) {
         GovernanceTokenStorage storage gs = _getGovernanceTokenStorage();
         uint256 nCheckpoints = gs.numCheckpoints[account];
-        return nCheckpoints > 0 ? gs.checkpoints[account][nCheckpoints - 1].votes : 0;
+        if (nCheckpoints > 0) {
+            return gs.checkpoints[account][nCheckpoints - 1].votes;
+        }
+        // If no checkpoints, fall back to balance (account has never delegated)
+        // This handles accounts that hold tokens but haven't activated delegation
+        address delegate = gs.delegates[account];
+        if (delegate == address(0) || delegate == account) {
+            return gs.balances[account];
+        }
+        return 0;
     }
 
     /**
@@ -564,7 +573,13 @@ contract GNUSDAOGovernanceTokenFacet is
 
         emit DelegateChanged(delegator, currentDelegate, delegatee);
 
-        _moveVotingPower(currentDelegate, delegatee, delegatorBalance);
+        // If delegator has no checkpoints yet, initialize with their balance
+        // This handles the first-time delegation for accounts that never activated checkpoints
+        if (gs.numCheckpoints[delegator] == 0 && delegatorBalance > 0 && currentDelegate == address(0)) {
+            _writeCheckpoint(delegator, 0, 0, delegatorBalance);
+        }
+
+        _moveVotingPower(currentDelegate == address(0) ? delegator : currentDelegate, delegatee, delegatorBalance);
     }
 
     /**
