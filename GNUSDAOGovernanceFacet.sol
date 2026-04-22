@@ -102,6 +102,11 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         ProposalAction[] actions; // Array of actions to execute
         mapping(address => uint256) votes;
         mapping(address => bool) hasVoted;
+        mapping(address => uint8) voteSupport; // 0=Against, 1=For, 2=Abstain
+        // NEW FIELDS ADDED AT END TO PRESERVE STORAGE LAYOUT
+        uint256 forVotes;      // Votes in support
+        uint256 againstVotes;  // Votes in opposition
+        uint256 abstainVotes;  // Abstain votes
     }
 
     struct VotingConfig {
@@ -150,6 +155,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     event VoteCast(
         uint256 indexed proposalId,
         address indexed voter,
+        uint8 support,
         uint256 votes,
         uint256 tokensCost
     );
@@ -388,8 +394,15 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      * @param proposalId ID of the proposal to vote on
      * @param votes Number of votes to cast
      */
+    /**
+     * @dev Vote on a proposal using quadratic voting
+     * @param proposalId ID of the proposal to vote on
+     * @param support Vote direction: 0 = Against, 1 = For, 2 = Abstain
+     * @param votes Number of votes to cast
+     */
     function vote(
         uint256 proposalId,
+        uint8 support,
         uint256 votes
     )
         external
@@ -400,6 +413,9 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     {
         if (votes == 0) {
             revert ZeroVotes();
+        }
+        if (support > 2) {
+            revert ZeroVotes(); // Reuse error for invalid support value
         }
 
         GovernanceStorage storage gs = _getGovernanceStorage();
@@ -413,40 +429,41 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             revert AlreadyVoted();
         }
 
-        // Prevent overflow: check votes is reasonable before squaring
-        // Max safe value: 1e10 (10 billion votes)
-        // (1e10)^2 * 1e18 = 1e38, well below uint256 max
-        // This is a more practical limit while still being extremely high
         if (votes > 1e10) {
             revert ExceedsMaxVotes();
         }
 
         // Calculate quadratic cost: cost = votes²
-        uint256 voteCost = votes * votes;
+        uint256 tokensCost = (votes * votes) * 10 ** 18;
 
-        // Check for overflow before multiplying by 10^18
-        // voteCost is at most (1e15)^2 = 1e30
-        // 1e30 * 1e18 = 1e48, which is safe for uint256
-        uint256 tokensCost = voteCost * 10 ** 18; // Convert to wei
-
-        // Check voting power at proposal start time (prevents flash loan attacks)
-        // Use block number from start time (approximate - use current block if start time is in future)
-        uint256 checkBlock = block.number > 1 ? block.number - 1 : 0;
-        uint256 availableVotes = _getPastVotingPower(_msgSender(), checkBlock);
-        if (availableVotes < tokensCost) {
-            revert InsufficientVotingPower();
+        // Check voting power at previous block (prevents flash loan attacks)
+        {
+            uint256 checkBlock = block.number > 1 ? block.number - 1 : 0;
+            if (_getPastVotingPower(_msgSender(), checkBlock) < tokensCost) {
+                revert InsufficientVotingPower();
+            }
         }
 
-        // Record the vote
+        // Record the vote with support direction
         proposal.votes[_msgSender()] = votes;
         proposal.hasVoted[_msgSender()] = true;
+        proposal.voteSupport[_msgSender()] = support;
         proposal.totalVotes += votes;
         proposal.totalVoters++;
 
-        // Burn tokens for quadratic cost - call governance token facet
+        // Tally by direction
+        if (support == 1) {
+            proposal.forVotes += votes;
+        } else if (support == 0) {
+            proposal.againstVotes += votes;
+        } else {
+            proposal.abstainVotes += votes;
+        }
+
+        // Burn tokens for quadratic cost
         _burnFrom(_msgSender(), tokensCost);
 
-        emit VoteCast(proposalId, _msgSender(), votes, tokensCost);
+        emit VoteCast(proposalId, _msgSender(), support, votes, tokensCost);
     }
 
     /**
@@ -519,6 +536,11 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         // Validate quorum threshold
         if (proposal.totalVotes < gs.votingConfig.quorumThreshold) {
             revert QuorumNotMet();
+        }
+
+        // Validate majority: For votes must exceed Against votes
+        if (proposal.forVotes <= proposal.againstVotes) {
+            revert QuorumNotMet(); // Reuse error — proposal did not achieve majority
         }
 
         // Queue the proposal
@@ -833,6 +855,32 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
 
         emit TreasuryWithdrawal(to, amount);
+    }
+
+    /**
+     * @dev Fix corrupted proposal state (emergency function)
+     * @param proposalId ID of the proposal to fix
+     * @param executed New executed state
+     * @param cancelled New cancelled state
+     * @param queued New queued state
+     * @notice Only owner can call this to fix storage corruption from upgrades
+     */
+    function fixProposalState(
+        uint256 proposalId,
+        bool executed,
+        bool cancelled,
+        bool queued
+    ) external onlyOwner proposalExists(proposalId) {
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        Proposal storage proposal = gs.proposals[proposalId];
+        
+        proposal.executed = executed;
+        proposal.cancelled = cancelled;
+        proposal.queued = queued;
+        
+        if (cancelled) {
+            emit ProposalCancelled(proposalId);
+        }
     }
 
     /**
@@ -1232,6 +1280,37 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
      */
     function getMaxVotesPerWallet() external view returns (uint256) {
         return _getGovernanceStorage().votingConfig.maxVotesPerWallet;
+    }
+
+    /**
+     * @dev Get vote breakdown for a proposal (For/Against/Abstain)
+     * @param proposalId ID of the proposal
+     */
+    function getVoteBreakdown(
+        uint256 proposalId
+    )
+        external
+        view
+        proposalExists(proposalId)
+        returns (uint256 forVotes, uint256 againstVotes, uint256 abstainVotes, uint256 totalVoters)
+    {
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        Proposal storage proposal = gs.proposals[proposalId];
+        return (proposal.forVotes, proposal.againstVotes, proposal.abstainVotes, proposal.totalVoters);
+    }
+
+    /**
+     * @dev Get a voter's support direction on a proposal
+     * @param proposalId ID of the proposal
+     * @param voter Address of the voter
+     * @return support 0=Against, 1=For, 2=Abstain
+     */
+    function getVoterSupport(
+        uint256 proposalId,
+        address voter
+    ) external view proposalExists(proposalId) returns (uint8 support) {
+        GovernanceStorage storage gs = _getGovernanceStorage();
+        return gs.proposals[proposalId].voteSupport[voter];
     }
 
     // Receive function to accept ETH deposits
