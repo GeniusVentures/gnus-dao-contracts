@@ -97,16 +97,17 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         uint256 totalVoters;
         bool executed;
         bool cancelled;
-        bool queued; // Whether proposal is queued for execution
-        uint256 queuedTime; // Timestamp when proposal was queued
-        ProposalAction[] actions; // Array of actions to execute
+        bool queued;
+        uint256 queuedTime;
+        ProposalAction[] actions;
         mapping(address => uint256) votes;
         mapping(address => bool) hasVoted;
         mapping(address => uint8) voteSupport; // 0=Against, 1=For, 2=Abstain
-        // NEW FIELDS ADDED AT END TO PRESERVE STORAGE LAYOUT
-        uint256 forVotes;      // Votes in support
-        uint256 againstVotes;  // Votes in opposition
-        uint256 abstainVotes;  // Abstain votes
+        // Fields added at end to preserve storage layout
+        uint256 forVotes;
+        uint256 againstVotes;
+        uint256 abstainVotes;
+        uint256 snapshotBlock; // Block number at proposal creation for snapshot voting
     }
 
     struct VotingConfig {
@@ -156,8 +157,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         uint256 indexed proposalId,
         address indexed voter,
         uint8 support,
-        uint256 votes,
-        uint256 tokensCost
+        uint256 votes
     );
 
     event VoteDelegated(address indexed delegator, address indexed delegatee);
@@ -362,6 +362,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         newProposal.endTime = newProposal.startTime + gs.votingConfig.votingPeriod;
         newProposal.queued = false;
         newProposal.queuedTime = 0;
+        newProposal.snapshotBlock = block.number; // Snapshot at proposal creation
 
         // Store actions
         for (uint256 i = 0; i < actionsLength; i++) {
@@ -390,15 +391,11 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
     }
 
     /**
-     * @dev Vote on a proposal using quadratic voting
-     * @param proposalId ID of the proposal to vote on
-     * @param votes Number of votes to cast
-     */
-    /**
-     * @dev Vote on a proposal using quadratic voting
+     * @dev Vote on a proposal using quadratic voting (snapshot-based, no token burn)
      * @param proposalId ID of the proposal to vote on
      * @param support Vote direction: 0 = Against, 1 = For, 2 = Abstain
      * @param votes Number of votes to cast
+     * @notice Voting power is checked at the proposal's snapshot block — tokens are NOT burned
      */
     function vote(
         uint256 proposalId,
@@ -415,7 +412,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             revert ZeroVotes();
         }
         if (support > 2) {
-            revert ZeroVotes(); // Reuse error for invalid support value
+            revert ZeroVotes();
         }
 
         GovernanceStorage storage gs = _getGovernanceStorage();
@@ -425,6 +422,7 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
         }
 
         Proposal storage proposal = gs.proposals[proposalId];
+
         if (proposal.hasVoted[_msgSender()]) {
             revert AlreadyVoted();
         }
@@ -433,18 +431,19 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             revert ExceedsMaxVotes();
         }
 
-        // Calculate quadratic cost: cost = votes²
-        uint256 tokensCost = (votes * votes) * 10 ** 18;
+        // Quadratic power required: votes² × 10^18 (checked against snapshot, NOT burned)
+        uint256 requiredPower = votes * votes * 10 ** 18;
 
-        // Check voting power at previous block (prevents flash loan attacks)
-        {
-            uint256 checkBlock = block.number > 1 ? block.number - 1 : 0;
-            if (_getPastVotingPower(_msgSender(), checkBlock) < tokensCost) {
-                revert InsufficientVotingPower();
-            }
+        // Check voting power at snapshot block (prevents flash loan attacks)
+        uint256 snapshotBlock = proposal.snapshotBlock > 0
+            ? proposal.snapshotBlock
+            : (block.number > 1 ? block.number - 1 : 0);
+
+        if (_getPastVotingPower(_msgSender(), snapshotBlock) < requiredPower) {
+            revert InsufficientVotingPower();
         }
 
-        // Record the vote with support direction
+        // Record the vote
         proposal.votes[_msgSender()] = votes;
         proposal.hasVoted[_msgSender()] = true;
         proposal.voteSupport[_msgSender()] = support;
@@ -460,10 +459,8 @@ contract GNUSDAOGovernanceFacet is Initializable, ReentrancyGuardUpgradeable, Pa
             proposal.abstainVotes += votes;
         }
 
-        // Burn tokens for quadratic cost
-        _burnFrom(_msgSender(), tokensCost);
-
-        emit VoteCast(proposalId, _msgSender(), support, votes, tokensCost);
+        // No token burn — snapshot-based voting preserves user tokens
+        emit VoteCast(proposalId, _msgSender(), support, votes);
     }
 
     /**
