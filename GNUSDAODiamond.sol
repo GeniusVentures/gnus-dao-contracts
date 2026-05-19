@@ -6,7 +6,7 @@ import "contracts-starter/contracts/facets/DiamondCutFacet.sol";
 import "contracts-starter/contracts/Diamond.sol";
 import "contracts-starter/contracts/libraries/LibDiamond.sol";
 import "@gnus.ai/contracts-upgradeable-diamond/utils/introspection/ERC165StorageUpgradeable.sol";
-import "@gnus.ai/contracts-upgradeable-diamond/token/ERC1155/IERC1155Upgradeable.sol";
+import "@gnus.ai/contracts-upgradeable-diamond/token/ERC20/IERC20Upgradeable.sol";
 import "./GNUSDAOOwnershipFacet.sol";
 
 /// @title GNUSDAODiamond
@@ -34,6 +34,7 @@ contract GNUSDAODiamond is Diamond, ERC165StorageUpgradeable {
         _registerInterface(type(IERC165Upgradeable).interfaceId);
         _registerInterface(type(IDiamondCut).interfaceId);
         _registerInterface(type(IDiamondLoupe).interfaceId);
+        _registerInterface(type(IERC20Upgradeable).interfaceId);
 
         // Mark the contract as uninitialized in the Initializable storage layout
         InitializableStorage.layout()._initialized = false;
